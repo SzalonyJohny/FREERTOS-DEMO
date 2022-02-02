@@ -11,5 +11,4 @@
 
 void Start_Sender_task(void *argument);
 
-
 #endif /* INC_SENDER_TASK_H_ */

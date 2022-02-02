@@ -12,30 +12,50 @@
 #include "cmsis_os.h"
 #include "MPU6050.h"
 
-
 extern I2C_HandleTypeDef hi2c1;
-
+extern osSemaphoreId_t Motion_SemaphoreHandle;
+extern osMessageQueueId_t Send_Sensor_DataHandle;
 
 
 struct imu_data_struct{
 	float ax, ay, az;
 	float gx, gy, gz;
+	float roll, pitch;
 }imu_data;
 
 
+uint8_t interrupt_flag;
 
 
+extern void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+
+	if(GPIO_Pin == IMU_INT_Pin)
+	{
+		uint8_t interrupts = MPU6050_GetIntStatusRegister();
+		MPU6050_GetMotionStatusRegister();
+		osSemaphoreRelease(Motion_SemaphoreHandle);
+	}
+}
 
 
 void Start_Sender_task(void *argument){
 
 	MPU6050_Init(&hi2c1);
 
-	MPU6050_SetIntEnableRegister(0);
+	MPU6050_SetInterruptMode(MPU6050_INTMODE_ACTIVELOW);
+	MPU6050_SetInterruptDrive(MPU6050_INTDRV_PUSHPULL);
+	MPU6050_SetInterruptLatch(MPU6050_INTLATCH_WAITCLEAR);
+	MPU6050_SetInterruptLatchClear(MPU6050_INTCLEAR_STATUSREAD);
 
+	MPU6050_SetIntEnableRegister(0); // Disable all interrupts
+
+	MPU6050_SetIntDataReadyEnabled(0);
+
+	// Enable Motion interrupts
 	MPU6050_SetDHPFMode(MPU6050_DHPF_5);
 
-	MPU6050_SetIntMotionEnabled(0);
+	MPU6050_SetIntMotionEnabled(1);
 	MPU6050_SetIntZeroMotionEnabled(0);
 	MPU6050_SetIntFreeFallEnabled(0);
 
@@ -48,13 +68,28 @@ void Start_Sender_task(void *argument){
 	MPU6050_SetZeroMotionDetectionDuration(2);
 	MPU6050_SetZeroMotionDetectionThreshold(4);
 
+	const uint32_t time_sample_to_send = 10;
 
+	osSemaphoreAcquire(Motion_SemaphoreHandle, osWaitForever);
 
 	for(;;){
 
-		osDelay(100);
-		MPU6050_GetAccelerometerScaled( &imu_data.ax, &imu_data.ay, &imu_data.az);
-		MPU6050_GetGyroscopeScaled(&imu_data.gx, &imu_data.gy, &imu_data.gz);
+		osSemaphoreAcquire(Motion_SemaphoreHandle, osWaitForever);
+
+		for(uint32_t time_stamp = 0; time_stamp < time_sample_to_send; ++time_stamp){
+			osDelay(200);
+			MPU6050_GetAccelerometerScaled( &imu_data.ax, &imu_data.ay, &imu_data.az);
+			MPU6050_GetGyroscopeScaled(&imu_data.gx, &imu_data.gy, &imu_data.gz);
+			HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
+
+
+
+			MPU6050_GetRollPitch( &imu_data.roll, &imu_data.pitch);
+			uint16_t angle = (uint16_t)(imu_data.pitch*100.0f);
+
+			osMessageQueuePut(Send_Sensor_DataHandle, &angle, 0U, 10);
+		}
+
 
 	}
 }
