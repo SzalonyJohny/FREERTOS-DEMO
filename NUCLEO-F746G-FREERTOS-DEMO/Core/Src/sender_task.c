@@ -15,7 +15,7 @@
 extern I2C_HandleTypeDef hi2c1;
 extern osSemaphoreId_t Motion_SemaphoreHandle;
 extern osMessageQueueId_t Send_Sensor_DataHandle;
-
+extern osTimerId_t Check_IMU_Angle_TimerHandle;
 
 struct imu_data_struct{
 	float ax, ay, az;
@@ -34,6 +34,23 @@ extern void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 	{
 		uint8_t interrupts = MPU6050_GetIntStatusRegister();
 		MPU6050_GetMotionStatusRegister();
+		osSemaphoreRelease(Motion_SemaphoreHandle);
+	}
+}
+
+
+
+// Timer_Callback 10s after end of scan loop ended
+void Check_Angle(void *argument){
+
+	float roll  = imu_data.roll;
+	float pitch = imu_data.pitch;
+	MPU6050_GetRollPitch( &imu_data.roll, &imu_data.pitch);
+
+	float diff_roll = fabsf(roll - imu_data.roll);
+	float diff_pitch = fabsf(pitch - imu_data.pitch);
+
+	if(diff_pitch + diff_roll > 5){
 		osSemaphoreRelease(Motion_SemaphoreHandle);
 	}
 }
@@ -62,8 +79,8 @@ void Start_Sender_task(void *argument){
 	MPU6050_SetFreeFallDetectionDuration(2);
 	MPU6050_SetFreeFallDetectionThreshold(5);
 
-	MPU6050_SetMotionDetectionDuration(5);
-	MPU6050_SetMotionDetectionThreshold(2);
+	MPU6050_SetMotionDetectionDuration(10);
+	MPU6050_SetMotionDetectionThreshold(6);
 
 	MPU6050_SetZeroMotionDetectionDuration(2);
 	MPU6050_SetZeroMotionDetectionThreshold(4);
@@ -90,6 +107,8 @@ void Start_Sender_task(void *argument){
 			osMessageQueuePut(Send_Sensor_DataHandle, &angle, 0U, 10);
 		}
 
+
+		osTimerStart(Check_IMU_Angle_TimerHandle, 10000U);
 
 	}
 }

@@ -1,9 +1,10 @@
 #MicroXplorer Configuration settings - do not modify
 FREERTOS.BinarySemaphores01=Motion_Semaphore,Static,Motion_Semaphore_ControlBlock
 FREERTOS.FootprintOK=true
-FREERTOS.IPParameters=Tasks01,configUSE_NEWLIB_REENTRANT,FootprintOK,BinarySemaphores01,Queues01,configENABLE_FPU
+FREERTOS.IPParameters=Tasks01,configUSE_NEWLIB_REENTRANT,FootprintOK,BinarySemaphores01,Queues01,configENABLE_FPU,Timers01
 FREERTOS.Queues01=Send_Sensor_Data,16,uint16_t,0,Static,Send_Sensor_DataBuffer,Send_Sensor_DataControlBlock
 FREERTOS.Tasks01=defaultTask,24,128,StartDefaultTask,Default,NULL,Dynamic,NULL,NULL;Sender_task,40,128,Start_Sender_task,As external,NULL,Dynamic,NULL,NULL;Reciver_task,41,2048,Start_Reciver_task,Default,NULL,Static,Reciver_taskBuffer,Reciver_taskControlBlock
+FREERTOS.Timers01=Check_IMU_Angle_Timer,Check_Angle,osTimerOnce,As external,NULL,Dynamic,NULL
 FREERTOS.configENABLE_FPU=1
 FREERTOS.configUSE_NEWLIB_REENTRANT=1
 File.Version=6
@@ -119,7 +120,7 @@ PA2.Signal=ETH_MDIO
 PA5.GPIOParameters=GPIO_PuPd,GPIO_Label,GPIO_ModeDefaultEXTI
 PA5.GPIO_Label=IMU_INT
 PA5.GPIO_ModeDefaultEXTI=GPIO_MODE_IT_FALLING
-PA5.GPIO_PuPd=GPIO_PULLUP
+PA5.GPIO_PuPd=GPIO_NOPULL
 PA5.Locked=true
 PA5.Signal=GPXTI5
 PA7.GPIOParameters=GPIO_Label
