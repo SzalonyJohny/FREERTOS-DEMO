@@ -22,16 +22,20 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "sender_task.h"
 
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
+typedef StaticQueue_t osStaticMessageQDef_t;
+typedef StaticSemaphore_t osStaticSemaphoreDef_t;
 /* USER CODE BEGIN PTD */
 
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+uint32_t counter_disp;
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -40,6 +44,8 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+
+I2C_HandleTypeDef hi2c1;
 
 UART_HandleTypeDef huart3;
 
@@ -59,6 +65,39 @@ const osThreadAttr_t LED_Task_attributes = {
   .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityLow,
 };
+/* Definitions for UI_task */
+osThreadId_t UI_taskHandle;
+const osThreadAttr_t UI_task_attributes = {
+  .name = "UI_task",
+  .stack_size = 128 * 4,
+  .priority = (osPriority_t) osPriorityLow,
+};
+/* Definitions for Sender_task */
+osThreadId_t Sender_taskHandle;
+const osThreadAttr_t Sender_task_attributes = {
+  .name = "Sender_task",
+  .stack_size = 128 * 4,
+  .priority = (osPriority_t) osPriorityHigh,
+};
+/* Definitions for Send_Sensor_Data */
+osMessageQueueId_t Send_Sensor_DataHandle;
+uint8_t Send_Sensor_DataBuffer[ 16 * sizeof( uint16_t ) ];
+osStaticMessageQDef_t Send_Sensor_DataControlBlock;
+const osMessageQueueAttr_t Send_Sensor_Data_attributes = {
+  .name = "Send_Sensor_Data",
+  .cb_mem = &Send_Sensor_DataControlBlock,
+  .cb_size = sizeof(Send_Sensor_DataControlBlock),
+  .mq_mem = &Send_Sensor_DataBuffer,
+  .mq_size = sizeof(Send_Sensor_DataBuffer)
+};
+/* Definitions for Button_Interrupt */
+osSemaphoreId_t Button_InterruptHandle;
+osStaticSemaphoreDef_t Button_InterruptControlBlock;
+const osSemaphoreAttr_t Button_Interrupt_attributes = {
+  .name = "Button_Interrupt",
+  .cb_mem = &Button_InterruptControlBlock,
+  .cb_size = sizeof(Button_InterruptControlBlock),
+};
 /* USER CODE BEGIN PV */
 
 /* USER CODE END PV */
@@ -68,8 +107,11 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART3_UART_Init(void);
 static void MX_USB_OTG_FS_PCD_Init(void);
+static void MX_I2C1_Init(void);
 void StartDefaultTask(void *argument);
 void StartTask02(void *argument);
+void Start_User_UI_Task(void *argument);
+extern void Start_Sender_task(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -110,6 +152,7 @@ int main(void)
   MX_GPIO_Init();
   MX_USART3_UART_Init();
   MX_USB_OTG_FS_PCD_Init();
+  MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
 
   /* USER CODE END 2 */
@@ -121,6 +164,10 @@ int main(void)
   /* add mutexes, ... */
   /* USER CODE END RTOS_MUTEX */
 
+  /* Create the semaphores(s) */
+  /* creation of Button_Interrupt */
+  Button_InterruptHandle = osSemaphoreNew(1, 1, &Button_Interrupt_attributes);
+
   /* USER CODE BEGIN RTOS_SEMAPHORES */
   /* add semaphores, ... */
   /* USER CODE END RTOS_SEMAPHORES */
@@ -128,6 +175,10 @@ int main(void)
   /* USER CODE BEGIN RTOS_TIMERS */
   /* start timers, add new ones, ... */
   /* USER CODE END RTOS_TIMERS */
+
+  /* Create the queue(s) */
+  /* creation of Send_Sensor_Data */
+  Send_Sensor_DataHandle = osMessageQueueNew (16, sizeof(uint16_t), &Send_Sensor_Data_attributes);
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
@@ -139,6 +190,12 @@ int main(void)
 
   /* creation of LED_Task */
   LED_TaskHandle = osThreadNew(StartTask02, NULL, &LED_Task_attributes);
+
+  /* creation of UI_task */
+  UI_taskHandle = osThreadNew(Start_User_UI_Task, NULL, &UI_task_attributes);
+
+  /* creation of Sender_task */
+  Sender_taskHandle = osThreadNew(Start_Sender_task, NULL, &Sender_task_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -178,7 +235,7 @@ void SystemClock_Config(void)
   /** Configure the main internal regulator output voltage
   */
   __HAL_RCC_PWR_CLK_ENABLE();
-  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE3);
+  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
@@ -187,10 +244,16 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
   RCC_OscInitStruct.PLL.PLLM = 4;
-  RCC_OscInitStruct.PLL.PLLN = 72;
+  RCC_OscInitStruct.PLL.PLLN = 216;
   RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
-  RCC_OscInitStruct.PLL.PLLQ = 3;
+  RCC_OscInitStruct.PLL.PLLQ = 9;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /** Activate the Over-Drive mode
+  */
+  if (HAL_PWREx_EnableOverDrive() != HAL_OK)
   {
     Error_Handler();
   }
@@ -200,13 +263,59 @@ void SystemClock_Config(void)
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
-  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
-  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_7) != HAL_OK)
   {
     Error_Handler();
   }
+}
+
+/**
+  * @brief I2C1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_I2C1_Init(void)
+{
+
+  /* USER CODE BEGIN I2C1_Init 0 */
+
+  /* USER CODE END I2C1_Init 0 */
+
+  /* USER CODE BEGIN I2C1_Init 1 */
+
+  /* USER CODE END I2C1_Init 1 */
+  hi2c1.Instance = I2C1;
+  hi2c1.Init.Timing = 0x00501E63;
+  hi2c1.Init.OwnAddress1 = 0;
+  hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c1.Init.OwnAddress2 = 0;
+  hi2c1.Init.OwnAddress2Masks = I2C_OA2_NOMASK;
+  hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /** Configure Analogue filter
+  */
+  if (HAL_I2CEx_ConfigAnalogFilter(&hi2c1, I2C_ANALOGFILTER_DISABLE) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /** Configure Digital filter
+  */
+  if (HAL_I2CEx_ConfigDigitalFilter(&hi2c1, 0) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN I2C1_Init 2 */
+
+  /* USER CODE END I2C1_Init 2 */
+
 }
 
 /**
@@ -324,6 +433,12 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Alternate = GPIO_AF11_ETH;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
+  /*Configure GPIO pin : PA5 */
+  GPIO_InitStruct.Pin = GPIO_PIN_5;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
   /*Configure GPIO pins : LD1_Pin LD3_Pin LD2_Pin */
   GPIO_InitStruct.Pin = LD1_Pin|LD3_Pin|LD2_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
@@ -376,11 +491,16 @@ static void MX_GPIO_Init(void)
 void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN 5 */
+	uint32_t internal_data_2 = 0;
+
   /* Infinite loop */
   for(;;)
   {
-    osDelay(250);
+	internal_data_2++;
+	counter_disp = internal_data_2;
+	osDelay(100);
     HAL_GPIO_TogglePin(LD1_GPIO_Port, LD1_Pin);
+
   }
   /* USER CODE END 5 */
 }
@@ -398,10 +518,27 @@ void StartTask02(void *argument)
   /* Infinite loop */
   for(;;)
   {
-    osDelay(1000);
-    HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
+	  osDelay(10000);
   }
   /* USER CODE END StartTask02 */
+}
+
+/* USER CODE BEGIN Header_Start_User_UI_Task */
+/**
+* @brief Function implementing the UI_task thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_Start_User_UI_Task */
+void Start_User_UI_Task(void *argument)
+{
+  /* USER CODE BEGIN Start_User_UI_Task */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(10000);
+  }
+  /* USER CODE END Start_User_UI_Task */
 }
 
 /**
