@@ -29,6 +29,7 @@
 /* Private typedef -----------------------------------------------------------*/
 typedef StaticTask_t osStaticThreadDef_t;
 typedef StaticQueue_t osStaticMessageQDef_t;
+typedef StaticSemaphore_t osStaticMutexDef_t;
 typedef StaticSemaphore_t osStaticSemaphoreDef_t;
 /* USER CODE BEGIN PTD */
 
@@ -56,7 +57,7 @@ PCD_HandleTypeDef hpcd_USB_OTG_FS;
 osThreadId_t defaultTaskHandle;
 const osThreadAttr_t defaultTask_attributes = {
   .name = "defaultTask",
-  .stack_size = 128 * 4,
+  .stack_size = 2048 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for Sender_task */
@@ -76,7 +77,7 @@ const osThreadAttr_t Reciver_task_attributes = {
   .cb_size = sizeof(Reciver_taskControlBlock),
   .stack_mem = &Reciver_taskBuffer[0],
   .stack_size = sizeof(Reciver_taskBuffer),
-  .priority = (osPriority_t) osPriorityHigh1,
+  .priority = (osPriority_t) osPriorityRealtime,
 };
 /* Definitions for Send_Sensor_Data */
 osMessageQueueId_t Send_Sensor_DataHandle;
@@ -93,6 +94,14 @@ const osMessageQueueAttr_t Send_Sensor_Data_attributes = {
 osTimerId_t Check_IMU_Angle_TimerHandle;
 const osTimerAttr_t Check_IMU_Angle_Timer_attributes = {
   .name = "Check_IMU_Angle_Timer"
+};
+/* Definitions for USART_MUTEX */
+osMutexId_t USART_MUTEXHandle;
+osStaticMutexDef_t USART_MUTEXControlBlock;
+const osMutexAttr_t USART_MUTEX_attributes = {
+  .name = "USART_MUTEX",
+  .cb_mem = &USART_MUTEXControlBlock,
+  .cb_size = sizeof(USART_MUTEXControlBlock),
 };
 /* Definitions for Motion_Semaphore */
 osSemaphoreId_t Motion_SemaphoreHandle;
@@ -163,6 +172,9 @@ int main(void)
 
   /* Init scheduler */
   osKernelInitialize();
+  /* Create the mutex(es) */
+  /* creation of USART_MUTEX */
+  USART_MUTEXHandle = osMutexNew(&USART_MUTEX_attributes);
 
   /* USER CODE BEGIN RTOS_MUTEX */
 	/* add mutexes, ... */
@@ -490,7 +502,6 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_StartDefaultTask */
@@ -503,14 +514,31 @@ static void MX_GPIO_Init(void)
 void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN 5 */
-	uint32_t internal_data_2 = 0;
+
+	char buff[200];
 
 	/* Infinite loop */
 	for(;;)
 	{
-		internal_data_2++;
-		counter_disp = internal_data_2;
-		osDelay(100);
+
+		osDelay(200);
+
+
+		// To make sure that whole text is send in one go
+		osMutexAcquire(USART_MUTEXHandle, osWaitForever);
+
+		// some long action
+		for(uint16_t i = 0; i<100; i++){
+			uint16_t len =  (uint16_t)sprintf(buff, "Some long text %d ", i);
+			HAL_UART_Transmit(&huart3, (uint8_t*)buff, len, 10);
+		}
+		HAL_UART_Transmit(&huart3, (uint8_t*)"\n", (uint8_t)2, 10);
+
+
+		osMutexRelease(USART_MUTEXHandle);
+
+
+
 		HAL_GPIO_TogglePin(LD1_GPIO_Port, LD1_Pin);
 
 	}
@@ -527,6 +555,9 @@ void StartDefaultTask(void *argument)
 void Start_Reciver_task(void *argument)
 {
   /* USER CODE BEGIN Start_Reciver_task */
+
+	char buff[30];
+
 	/* Infinite loop */
 	for(;;)
 	{
@@ -534,13 +565,18 @@ void Start_Reciver_task(void *argument)
 		osStatus_t status = osMessageQueueGet(Send_Sensor_DataHandle, &recived_data, NULL, osWaitForever);
 
 		if (status == osOK) {
-			char buff[30];
+
+			osMutexAcquire(USART_MUTEXHandle, osWaitForever);
 			uint16_t len = (uint16_t)sprintf(buff, "Pitch angle = %d\n" , recived_data);
 			HAL_UART_Transmit(&huart3, (uint8_t*)buff, len, 10);
+			osMutexRelease(USART_MUTEXHandle);
+
 		}
 		else {
 			Error_Handler();
 		}
+
+
 	}
   /* USER CODE END Start_Reciver_task */
 }

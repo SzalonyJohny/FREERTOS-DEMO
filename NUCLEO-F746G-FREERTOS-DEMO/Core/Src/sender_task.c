@@ -11,6 +11,7 @@
 #include "main.h"
 #include "cmsis_os.h"
 #include "MPU6050.h"
+#include <math.h>
 
 extern I2C_HandleTypeDef hi2c1;
 extern osSemaphoreId_t Motion_SemaphoreHandle;
@@ -93,13 +94,12 @@ void Start_Sender_task(void *argument){
 
 		osSemaphoreAcquire(Motion_SemaphoreHandle, osWaitForever);
 
+		// Scan loop
 		for(uint32_t time_stamp = 0; time_stamp < time_sample_to_send; ++time_stamp){
 			osDelay(200);
 			MPU6050_GetAccelerometerScaled( &imu_data.ax, &imu_data.ay, &imu_data.az);
 			MPU6050_GetGyroscopeScaled(&imu_data.gx, &imu_data.gy, &imu_data.gz);
 			HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
-
-
 
 			MPU6050_GetRollPitch( &imu_data.roll, &imu_data.pitch);
 			uint16_t angle = (uint16_t)(imu_data.pitch*100.0f);
